@@ -17,77 +17,72 @@ class ThreadWithReturnValue(Thread):
         Thread.join(self, *args)
         return self._return
 
-def pprint(t):
-    for i in t:
-        print(i)
+class MultithreadedDataSpliting():
+    def __init__(self, K: int, distance_fn):
+        self.K = K
+        self.distance_fn = distance_fn
 
-# read dataset from file
-def read_dataset(filename):
-    dataset = []
-    with open(filename) as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                dataset.append(line.split(","))
-    return dataset
+    def pprint(self, t):
+        for i in t:
+            print(i)
 
-# find the distance between two records based on the parameter
-def distance(rec1, rec2, parameter):
-    if parameter == "age":
-        return abs(int(rec1[0]) - int(rec2[0]))
-    elif parameter == "zipcode":
-        return abs(int(rec1[1]) - int(rec2[1]))
-
-
-# divide the cluster into two clusters based on the centroids
-def splitCurrentCluster(cluster, parameter):
-    centroid = [None, None]
-    # find the two farthest most records in the cluster and use them as centroids
-    for i in range(len(cluster)):
-        for j in range(i + 1, len(cluster)):
-            if centroid == [None, None] or distance(cluster[i], cluster[j], parameter) > distance(
-                centroid[0], centroid[1], parameter
-            ):
-                centroid = [cluster[i], cluster[j]]
+    # read dataset from file
+    def read_dataset(self, filename):
+        dataset = []
+        with open(filename) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    dataset.append(line.split(","))
+        return dataset
 
     # divide the cluster into two clusters based on the centroids
-    cluster1 = []
-    cluster2 = []
-    for i in range(len(cluster)):
-        if distance(cluster[i], centroid[0], parameter) < distance(
-            cluster[i], centroid[1], parameter
-        ):
-            cluster1.append(cluster[i])
-        else:
-            cluster2.append(cluster[i])
+    def splitCurrentCluster(self, cluster):
+        centroid = [None, None]
+        # find the two farthest most records in the cluster and use them as centroids
+        for i in range(len(cluster)):
+            for j in range(i + 1, len(cluster)):
+                if centroid == [None, None] or self.distance_fn(cluster[i], cluster[j]) > self.distance_fn(
+                    centroid[0], centroid[1]
+                ):
+                    centroid = [cluster[i], cluster[j]]
 
-    return [cluster1, cluster2]
+        # divide the cluster into two clusters based on the centroids
+        # TODO: Deal with outliers
+        new_clusters = [[], []]
+        for i in range(len(cluster)):
+            if self.distance_fn(cluster[i], centroid[0]) < self.distance_fn(cluster[i], centroid[1]):
+                new_clusters[0].append(cluster[i])
+            else:
+                new_clusters[1].append(cluster[i])
+
+        return new_clusters
 
 
-# use divide and conquer approach for splitting the dataset into parallel number of clusters
-def splitCluster(dataset, parameter, k):
-    if (len(dataset) < 2 * k):
-        return [dataset]
-    
-    clusters = splitCurrentCluster(dataset, parameter)
+    # use divide and conquer approach for splitting the dataset into parallel number of clusters
+    def splitCluster(self, dataset):
+        # print(dataset)
+        if (len(dataset) < 2 * self.K):
+            return [dataset]
+        
+        clusters = self.splitCurrentCluster(dataset)
 
-    threads = [
-        ThreadWithReturnValue(target=splitCluster, args=(clusters[0], parameter, k,)),
-        ThreadWithReturnValue(target=splitCluster, args=(clusters[1], parameter, k,))
-    ]
+        threads = [
+            ThreadWithReturnValue(target=self.splitCluster, args=(clusters[0],)),
+            ThreadWithReturnValue(target=self.splitCluster, args=(clusters[1],))
+        ]
 
-    threads[0].start()
-    threads[1].start()
+        threads[0].start()
+        threads[1].start()
 
-    result = []
-    result.extend(threads[0].join())
-    result.extend(threads[1].join())
+        result = []
+        result.extend(threads[0].join())
+        result.extend(threads[1].join())
 
-    return result
+        return result
 
 def main():
-    k = 2  # k-anonymity
-    processors = 4
+    K = 2  # k-anonymity
 
     # # filename = ""
     # # dataset = read_dataset(filename)
@@ -109,26 +104,26 @@ def main():
         [45, 12799, 63743],
         [40, 36755, 50332],
     ]
-    # df = pd.DataFrame(data=data, columns=columns)
 
-    # parallel = len(data) / processors
+    # create a custom distance function for figuring out the distance
+    def distance_fn(rec1, rec2):
+        return (abs(rec1[0] - rec2[0]) + abs(rec1[1] - rec2[1]) * 0.001)
 
-    # divide into parallel number of clusters based on 1Dimension only!!
-    # clusters = divideConquer(data, "age", parallel)
-    clusters = splitCluster(data, "age", k)
+    anonimizer = MultithreadedDataSpliting(K, distance_fn)
+    clusters = anonimizer.splitCluster(data)
     anonymized_dataframe = pd.DataFrame(data=[], columns=columns)
     # for each cluster, use mondrian algorithm on all dimensions (QI)
     for cluster in clusters:
         df = pd.DataFrame(data=cluster, columns=columns)
         p = anonypy.Preserver(df, feature_columns, sensitive_column)
-        rows = p.anonymize_k_anonymity(k=k)
+        rows = p.anonymize_k_anonymity(k=K)
 
         # print anonymized cluster
         # dfn = pd.DataFrame(rows)
         # print(dfn)
 
         anonymized_dataframe = pd.concat([anonymized_dataframe, pd.DataFrame(rows, columns=columns)])
-    anonymized_dataframe.reset_index(inplace = True)
+    anonymized_dataframe.reset_index(drop=True, inplace = True)
     print(anonymized_dataframe)
 
 main()
