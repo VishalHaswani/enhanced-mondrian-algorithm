@@ -1,6 +1,21 @@
 from math import log2
 import anonypy
 import pandas as pd
+from threading import Thread 
+
+class ThreadWithReturnValue(Thread):
+    def __init__(self, group=None, target=None, name=None,
+                 args=(), kwargs={}, Verbose=None):
+        Thread.__init__(self, group, target, name, args, kwargs)
+        self._return = None
+
+    def run(self):
+        if self._target is not None:
+            self._return = self._target(*self._args,
+                                                **self._kwargs)
+    def join(self, *args):
+        Thread.join(self, *args)
+        return self._return
 
 def pprint(t):
     for i in t:
@@ -25,7 +40,7 @@ def distance(rec1, rec2, parameter):
 
 
 # divide the cluster into two clusters based on the centroids
-def splitCluster(cluster, parameter):
+def splitCurrentCluster(cluster, parameter):
     centroid = [None, None]
     # find the two farthest most records in the cluster and use them as centroids
     for i in range(len(cluster)):
@@ -50,20 +65,25 @@ def splitCluster(cluster, parameter):
 
 
 # use divide and conquer approach for splitting the dataset into parallel number of clusters
-def divideConquer(dataset, parameter, parallel):
-    itr = int(log2(parallel))
-    clusters = [dataset]
+def splitCluster(dataset, parameter, k):
+    if (len(dataset) < 2 * k):
+        return [dataset]
+    
+    clusters = splitCurrentCluster(dataset, parameter)
 
-    while itr > 0:
-        itr -= 1
-        new_clusters = []
-        for cluster in clusters:
-            new_clusters.extend(splitCluster(cluster, parameter))
+    threads = [
+        ThreadWithReturnValue(target=splitCluster, args=(clusters[0], parameter, k,)),
+        ThreadWithReturnValue(target=splitCluster, args=(clusters[1], parameter, k,))
+    ]
 
-        clusters = new_clusters
+    threads[0].start()
+    threads[1].start()
 
-    return clusters
+    result = []
+    result.extend(threads[0].join())
+    result.extend(threads[1].join())
 
+    return result
 
 def main():
     k = 2  # k-anonymity
@@ -91,13 +111,12 @@ def main():
     ]
     # df = pd.DataFrame(data=data, columns=columns)
 
-    parallel = len(data) / processors
-
-    anonymized_dataset = []
+    # parallel = len(data) / processors
 
     # divide into parallel number of clusters based on 1Dimension only!!
-    clusters = divideConquer(data, "age", parallel)
-
+    # clusters = divideConquer(data, "age", parallel)
+    clusters = splitCluster(data, "age", k)
+    anonymized_dataframe = pd.DataFrame(data=[], columns=columns)
     # for each cluster, use mondrian algorithm on all dimensions (QI)
     for cluster in clusters:
         df = pd.DataFrame(data=cluster, columns=columns)
@@ -105,10 +124,11 @@ def main():
         rows = p.anonymize_k_anonymity(k=k)
 
         # print anonymized cluster
-        dfn = pd.DataFrame(rows)
-        print(dfn)
+        # dfn = pd.DataFrame(rows)
+        # print(dfn)
 
-        # anonymized_dataset.extend()
-
+        anonymized_dataframe = pd.concat([anonymized_dataframe, pd.DataFrame(rows, columns=columns)])
+    anonymized_dataframe.reset_index(inplace = True)
+    print(anonymized_dataframe)
 
 main()
